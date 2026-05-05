@@ -1,0 +1,1 @@
+/opt/rh/devtoolset-11/root/usr/bin/g++  -g   CMakeFiles/cli_tool1.dir/cli_tool1_autogen/mocs_compilation.cpp.o CMakeFiles/cli_tool1.dir/src/cli1/main.cpp.o  -o bin/cli_tool1  -Wl,-rpath,/home/liuzhipeng/Qt5.15.2/5.15.2/gcc_64/lib: /home/liuzhipeng/Qt5.15.2/5.15.2/gcc_64/lib/libQt5Core.so.5.15.2 /usr/lib64/libcurl.so 

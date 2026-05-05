@@ -1,0 +1,10 @@
+{
+    // 强制指定：编译产物 生成到 【当前工作区目录/Build】
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    // // 强制使用：当前工作区根目录的CMakeLists.txt 作为顶层
+    "cmake.sourceDirectory": "${workspaceFolder}",
+
+    "cmake.configureSettings": {
+        "CMAKE_PREFIX_PATH": "/home/liuzhipeng/Qt5.15.2/5.15.2/gcc_64"
+    }
+}

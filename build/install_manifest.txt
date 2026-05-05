@@ -1,0 +1,3 @@
+/home/liuzhipeng/projects/testPackage/./package/bin/cli_tool1
+/home/liuzhipeng/projects/testPackage/./package/bin/cli_tool2
+/home/liuzhipeng/projects/testPackage/./package/bin/gui_app
