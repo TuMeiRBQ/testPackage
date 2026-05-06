@@ -15,10 +15,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # 仅加载动态库
 set(CMAKE_FIND_LIBRARY_SUFFIXES .so)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH OFF)
 
 # 依赖
 find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
 find_package(CURL REQUIRED)
+
+include(cmake/Clp.cmake)
 
 # 安装目录：cmake --install 会自动生成 bin/lib 结构
 set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/deploy)
@@ -34,14 +37,14 @@ install(TARGETS cli_tool1 RUNTIME DESTINATION bin)
 # ======================
 # 2. CLI 工具2
 # ======================
-add_executable(cli_tool2 src/cli2/main.cpp)
-target_link_libraries(cli_tool2 Qt5::Core ${CURL_LIBRARIES})
-target_include_directories(cli_tool2 PRIVATE ${CURL_INCLUDE_DIRS})
-install(TARGETS cli_tool2 RUNTIME DESTINATION bin)
+add_library(myclp src/cli2/myclp_lib.cpp)
+target_link_libraries(myclp CLP::Clp)
+target_include_directories(myclp PRIVATE ${CURL_INCLUDE_DIRS})
+target_include_directories(myclp PUBLIC src/cli2)
 
 # ======================
 # 3. GUI 程序
 # ======================
 add_executable(gui_app src/gui/main.cpp)
-target_link_libraries(gui_app Qt5::Core Qt5::Widgets)
+target_link_libraries(gui_app Qt5::Core Qt5::Widgets myclp)
 install(TARGETS gui_app RUNTIME DESTINATION bin)

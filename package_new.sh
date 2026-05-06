@@ -94,6 +94,7 @@ package_executable() {
     info "Packaging: $(basename "$exe")"
     local args=("$exe" "-qmake=$QMAKE")
     [[ "$BUNDLE_NON_QT" == true ]] && args+=("-bundle-non-qt-libs")
+    info "$LINUXDEPLOY ${args[*]}"
     "$LINUXDEPLOY" "${args[@]}"
 }
 
