@@ -1,153 +1,154 @@
 #!/usr/bin/env bash
+
+# 如果当前不是 bash，自动切换为 bash 执行（解决 sh 调用的问题）
+[ -z "$BASH_VERSION" ] && exec /usr/bin/env bash "$0" "$@"
+
 set -euo pipefail
 
-########################################
+# 颜色
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
 
-# 默认配置
-
-########################################
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$SCRIPT_DIR"
-
+# 固定配置
 BUILD_DIR=""
-APPDIR="${PROJECT_ROOT}/package"
-
-TOOLS_DIR="${SCRIPT_DIR}/tools"
-LINUXDEPLOY="${TOOLS_DIR}/linuxdeployqt"
-PATCHELF="${TOOLS_DIR}/patchelf"
-
+PACKAGE_ROOT="./package"
+TARGET_BIN="${PACKAGE_ROOT}/bin"
+TARGET_LIB="${PACKAGE_ROOT}/lib"
+TARGET_PLUGINS="${PACKAGE_ROOT}/plugins"
+DEFAULT_MAIN_APP="gui_app"
+MAIN_APP=""
+ALL_APPS=false
 QMAKE="/home/liuzhipeng/Qt5.15.2/5.15.2/gcc_64/bin/qmake"
-BUNDLE_NON_QT=true
-
-########################################
+declare -A GLOBAL_DEP_LIBS
 
 # 日志
-
-########################################
-
-log() {
-echo "[INFO] $*"
-}
-
-err() {
-echo "[ERROR] $*" >&2
-exit 1
-}
-
-########################################
-
-# 自动推断构建目录
-
-########################################
-
-detect_build_dir() {
-if [[ -n "${BUILD_DIR}" ]]; then
-return
-fi
-
-
-if [[ -d build/release ]]; then
-    BUILD_DIR="build/release"
-elif [[ -d build ]]; then
-    BUILD_DIR="build"
-else
-    err "未找到构建目录，请使用 --build-dir 指定"
-fi
-
-}
-
-########################################
-
-# 参数解析
-
-########################################
-
-while [[ $# -gt 0 ]]; do
-case "$1" in
---build-dir)
-BUILD_DIR="$2"
-shift 2
-;;
---appdir)
-APPDIR="$2"
-shift 2
-;;
---qmake)
-QMAKE="$2"
-shift 2
-;;
---no-bundle-non-qt)
-BUNDLE_NON_QT=false
-shift
-;;
-*)
-err "未知参数: $1"
-;;
-esac
-done
-
-detect_build_dir
-
-########################################
+info()  { echo -e "${GREEN}[INFO] $*${NC}"; }
+error() { echo -e "${RED}[ERROR] $*${NC}" >&2; exit 1; }
 
 # 检查工具
+check_tools() {
+    command -v patchelf || error "缺少patchelf"
+    QT_PATH=$($QMAKE -query QT_INSTALL_PREFIX)
+    info "Qt路径: $QT_PATH"
+}
 
-########################################
+# 检测构建目录
+detect_build() {
+    if [ -z "$BUILD_DIR" ]; then
+        [ -d "build/release/bin" ] && BUILD_DIR="build/release"
+        [ -d "build/bin" ]        && BUILD_DIR="build"
+        [ -z "$BUILD_DIR" ]       && error "无构建目录"
+    fi
+    info "构建目录: $BUILD_DIR"
+}
 
-[[ -x "$LINUXDEPLOY" ]] || err "linuxdeployqt 不存在或不可执行: $LINUXDEPLOY"
-[[ -x "$PATCHELF" ]] || err "patchelf 不存在或不可执行: $PATCHELF"
-[[ -x "$QMAKE" ]] || err "qmake 不存在或不可执行: $QMAKE"
+# 参数解析
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --build-dir) BUILD_DIR="$2"; shift 2 ;;
+            --main-app)  MAIN_APP="$2";  shift 2 ;;
+            -a|--all)    ALL_APPS=true;  shift    ;;
+            *) shift ;;
+        esac
+    done
+}
 
-export PATCHELF
+# 复制可执行文件
+copy_exe() {
+    info "复制可执行文件"
+    mkdir -p "$TARGET_BIN"
+    local src_bin="${BUILD_DIR}/bin"
 
-########################################
+    if [ "$ALL_APPS" = true ]; then
+        for file in "$src_bin"/*; do
+            [ -f "$file" ] && [ -x "$file" ] && cp -f "$file" "$TARGET_BIN/"
+        done
+    else
+        local exe="${src_bin}/${MAIN_APP:-$DEFAULT_MAIN_APP}"
+        cp -f "$exe" "$TARGET_BIN/"
+    fi
+}
 
-# 清理输出目录
+# 递归解析依赖（修复了 set -u 下关联数组报错的问题）
+resolve_lib() {
+    local lib
+    while IFS= read -r lib; do
+        # 关键修复：用 "+x" 检查键是否存在，避免 unbound variable
+        if [ -f "$lib" ] && [ -z "${GLOBAL_DEP_LIBS[$lib]+x}" ]; then
+            GLOBAL_DEP_LIBS[$lib]=1
+            resolve_lib "$lib"
+        fi
+    done < <(ldd "$1" 2>/dev/null | awk '$3 ~ /^\// {print $3}')
+}
 
-########################################
+# 复制依赖库
+copy_libs() {
+    info "收集依赖库"
+    mkdir -p "$TARGET_LIB"
+    unset GLOBAL_DEP_LIBS
+    declare -A GLOBAL_DEP_LIBS
 
-rm -rf "$APPDIR"
-mkdir -p "$APPDIR"
+    local exe
+    for exe in "$TARGET_BIN"/*; do
+        [ -x "$exe" ] && resolve_lib "$exe"
+    done
 
-########################################
+    local lib
+    for lib in "${!GLOBAL_DEP_LIBS[@]}"; do
+        cp -f "$lib" "$TARGET_LIB/"
+    done
+}
 
-# 安装
+# 复制Qt平台插件
+copy_qt() {
+    info "复制Qt插件"
+    mkdir -p "${TARGET_PLUGINS}/platforms"
+    local xcb="${QT_PATH}/plugins/platforms/libqxcb.so"
+    [ -f "$xcb" ] && cp -f "$xcb" "${TARGET_PLUGINS}/platforms/"
+}
 
-########################################
+# 设置 RPATH
+set_rpath() {
+    info "设置RPATH"
+    local exe
+    for exe in "$TARGET_BIN"/*; do
+        [ -x "$exe" ] && patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$exe"
+    done
+    local lib
+    for lib in "$TARGET_LIB"/*.so*; do
+        [ -f "$lib" ] && patchelf --force-rpath --set-rpath '$ORIGIN' "$lib"
+    done
+}
 
-log "安装到 AppDir..."
-cmake --install "$BUILD_DIR" --prefix "$APPDIR"
+# 生成 qt.conf
+qt_conf() {
+    echo "[Paths]"           >  "${TARGET_BIN}/qt.conf"
+    echo "Plugins=../plugins" >> "${TARGET_BIN}/qt.conf"
+}
 
-########################################
+# 主流程
+main() {
+    info "======== 打包启动 ========"
+    parse_args "$@"
+    detect_build
+    check_tools
 
-# 打包所有可执行文件
+    rm -rf "$PACKAGE_ROOT"
+    mkdir -p "$PACKAGE_ROOT"
 
-########################################
+    copy_exe
+    copy_qt
+    copy_libs
+    set_rpath
+    qt_conf
 
-APP_BIN_DIR="${APPDIR}/bin"
+    info "======== 打包完成 ========"
+    info "运行：cd package/bin && ./gui_app"
+}
 
-[[ -d "$APP_BIN_DIR" ]] || err "未找到安装后的 bin 目录: $APP_BIN_DIR"
+main "$@"
 
-log "开始打包所有可执行文件..."
 
-find "$APP_BIN_DIR" -maxdepth 1 -type f -executable | while read -r exe; do
-log "处理 $(basename "$exe")"
-
-```
-ARGS=(
-    "$exe"
-    "-qmake=$QMAKE"
-)
-
-if [[ "$BUNDLE_NON_QT" == true ]]; then
-    ARGS+=("-bundle-non-qt-libs")
-fi
-
-"$LINUXDEPLOY" "${ARGS[@]}"
-```
-
-done
-
-log "完成"
-log "输出目录: $APPDIR"
+# 缺少黑名单机制过滤系统库 排除libpthread.so.0 libstdc++.so.6  libdl.so.2 libm.so.6 libgcc_s.so.1, qt相关的可以不打包， 之后使用打包工具打包即可。混合打包。
